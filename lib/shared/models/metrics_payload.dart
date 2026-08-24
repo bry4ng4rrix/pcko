@@ -112,21 +112,24 @@ class NetworkMetrics {
   final double? downloadKbps;
   final double? uploadKbps;
   final String? interfaceName;
+  final double? pingMs;
 
   const NetworkMetrics(
-      {this.downloadKbps, this.uploadKbps, this.interfaceName});
+      {this.downloadKbps, this.uploadKbps, this.interfaceName, this.pingMs});
 
   factory NetworkMetrics.fromJson(Map<String, dynamic> json) =>
       NetworkMetrics(
         downloadKbps: _toDouble(json['download_kbps']),
         uploadKbps: _toDouble(json['upload_kbps']),
         interfaceName: json['interface'] as String?,
+        pingMs: _toDouble(json['ping_ms']),
       );
 
   Map<String, dynamic> toJson() => {
         'download_kbps': downloadKbps,
         'upload_kbps': uploadKbps,
         'interface': interfaceName,
+        'ping_ms': pingMs,
       };
 }
 

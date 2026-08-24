@@ -33,3 +33,21 @@ Future<String?> getLocalIpAddress() async {
     return null;
   }
 }
+
+/// Mesure le ping (aller-retour ICMP) vers [host] via la commande système
+/// `ping`, une seule requête. Retourne `null` si `ping` est absent, échoue,
+/// ou si l'hôte est injoignable — jamais une valeur inventée.
+Future<double?> measurePingMs({String host = '8.8.8.8'}) async {
+  try {
+    final result = Platform.isWindows
+        ? await Process.run('ping', ['-n', '1', '-w', '1000', host])
+        : await Process.run('ping', ['-c', '1', '-W', '1', host]);
+    if (result.exitCode != 0) return null;
+    final match =
+        RegExp(r'(\d+(?:[.,]\d+)?)\s*ms').firstMatch(result.stdout as String);
+    if (match == null) return null;
+    return double.tryParse(match.group(1)!.replaceAll(',', '.'));
+  } catch (_) {
+    return null;
+  }
+}
