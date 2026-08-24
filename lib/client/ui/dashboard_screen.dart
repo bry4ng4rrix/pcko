@@ -76,9 +76,11 @@ class ClientHomeView extends StatelessWidget {
                   child: _UsageLineChart(history: client.history),
                 ),
                 const SizedBox(height: 24),
-                Text('Réseau (kb/s)',
+                Text('Réseau',
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),
+                NetworkSpeedRow(network: payload.network),
+                const SizedBox(height: 12),
                 SizedBox(
                   height: 140,
                   child: _NetworkLineChart(history: client.history),

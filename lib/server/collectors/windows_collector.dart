@@ -12,6 +12,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import '../../shared/models/metrics_payload.dart';
+import '../../shared/util/network_util.dart';
 import 'metrics_collector.dart';
 
 class WindowsMetricsCollector implements MetricsCollector {
@@ -29,6 +30,8 @@ class WindowsMetricsCollector implements MetricsCollector {
   bool _warnedNoLhm = false;
   bool _warnedNoGpu = false;
   bool _warnedNoFps = false;
+  double? _lastPingMs;
+  DateTime? _lastPingAt;
 
   @override
   Future<MetricsPayload> collect() async {
@@ -56,6 +59,8 @@ class WindowsMetricsCollector implements MetricsCollector {
     }
 
     final screen = await _collectScreen();
+    final network = await _collectNetwork();
+    final pingMs = await _collectPing();
 
     return MetricsPayload(
       timestamp: DateTime.now(),
@@ -68,9 +73,26 @@ class WindowsMetricsCollector implements MetricsCollector {
       ),
       gpus: gpus,
       ram: ram,
-      network: await _collectNetwork(),
+      network: NetworkMetrics(
+        downloadKbps: network.downloadKbps,
+        uploadKbps: network.uploadKbps,
+        interfaceName: network.interfaceName,
+        pingMs: pingMs,
+      ),
       screen: screen,
     );
+  }
+
+  /// Ping ICMP throttlé (une mesure réelle toutes les 3s max, réutilisée
+  /// entre-temps) pour éviter de relancer `ping` à chaque cycle de collecte.
+  Future<double?> _collectPing() async {
+    final now = DateTime.now();
+    if (_lastPingAt == null ||
+        now.difference(_lastPingAt!) >= const Duration(seconds: 3)) {
+      _lastPingMs = await measurePingMs();
+      _lastPingAt = now;
+    }
+    return _lastPingMs;
   }
 
   Future<_CpuInfo> _collectCpuInfo() async {

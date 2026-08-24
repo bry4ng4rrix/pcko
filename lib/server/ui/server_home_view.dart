@@ -113,13 +113,8 @@ class _ServerHomeViewState extends State<ServerHomeView> {
                           const SizedBox(height: 8),
                           Text(
                               'Interface : ${payload.network.interfaceName ?? 'indisponible'}'),
-                          const SizedBox(height: 4),
-                          Text(payload.network.downloadKbps != null
-                              ? '↓ ${payload.network.downloadKbps!.toStringAsFixed(1)} kb/s'
-                              : '↓ indisponible'),
-                          Text(payload.network.uploadKbps != null
-                              ? '↑ ${payload.network.uploadKbps!.toStringAsFixed(1)} kb/s'
-                              : '↑ indisponible'),
+                          const SizedBox(height: 8),
+                          NetworkSpeedRow(network: payload.network),
                         ],
                       ),
                     ),

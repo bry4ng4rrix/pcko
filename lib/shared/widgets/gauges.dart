@@ -202,6 +202,79 @@ class TemperatureBadge extends StatelessWidget {
   }
 }
 
+String _formatKbps(double kbps) {
+  if (kbps >= 1000) return '${(kbps / 1000).toStringAsFixed(1)} Mb/s';
+  return '${kbps.toStringAsFixed(0)} kb/s';
+}
+
+Color _pingColor(double ms) {
+  if (ms < 50) return Colors.green;
+  if (ms < 150) return Colors.orange;
+  return Colors.red;
+}
+
+/// Vitesse réseau (↓/↑, en direct) et ping sur une seule ligne bien visible.
+class NetworkSpeedRow extends StatelessWidget {
+  const NetworkSpeedRow({super.key, required this.network});
+
+  final NetworkMetrics network;
+
+  @override
+  Widget build(BuildContext context) {
+    final pingMs = network.pingMs;
+    final pingColor = pingMs == null ? Colors.grey : _pingColor(pingMs);
+    final titleStyle = Theme.of(context)
+        .textTheme
+        .titleMedium
+        ?.copyWith(fontWeight: FontWeight.bold);
+
+    return Wrap(
+      spacing: 20,
+      runSpacing: 8,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.arrow_downward, color: Colors.blue, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              network.downloadKbps != null
+                  ? _formatKbps(network.downloadKbps!)
+                  : 'N/A',
+              style: titleStyle,
+            ),
+          ],
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.arrow_upward, color: Colors.orange, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              network.uploadKbps != null
+                  ? _formatKbps(network.uploadKbps!)
+                  : 'N/A',
+              style: titleStyle,
+            ),
+          ],
+        ),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.network_ping, color: pingColor, size: 20),
+            const SizedBox(width: 4),
+            Text(
+              pingMs != null ? '${pingMs.toStringAsFixed(0)} ms' : 'N/A',
+              style: titleStyle?.copyWith(color: pingColor),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+}
+
 /// Petit indicateur textuel + pastille de couleur pour un état de connexion.
 class StatusDot extends StatelessWidget {
   const StatusDot({super.key, required this.color, required this.label});
