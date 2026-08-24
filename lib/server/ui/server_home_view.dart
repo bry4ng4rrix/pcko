@@ -108,42 +108,6 @@ class _ServerHomeViewState extends State<ServerHomeView> {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text('FPS écran',
-                              style: Theme.of(context).textTheme.titleMedium),
-                          const SizedBox(height: 8),
-                          Text(payload.screen.fps != null
-                              ? '${payload.screen.fps!.toStringAsFixed(0)} FPS'
-                                  '${payload.screen.processName != null ? ' · ${payload.screen.processName}' : ''}'
-                              : 'indisponible'),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text('Mémoire (RAM)',
-                              style: Theme.of(context).textTheme.titleMedium),
-                          const SizedBox(height: 8),
-                          Text(payload.ram.usedMb != null &&
-                                  payload.ram.totalMb != null
-                              ? '${payload.ram.usedMb} Mo / ${payload.ram.totalMb} Mo utilisés'
-                              : 'indisponible'),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Card(
-                    child: Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
                           Text('Réseau',
                               style: Theme.of(context).textTheme.titleMedium),
                           const SizedBox(height: 8),

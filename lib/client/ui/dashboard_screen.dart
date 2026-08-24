@@ -68,24 +68,6 @@ class ClientHomeView extends StatelessWidget {
                   ),
                 ),
                 const SizedBox(height: 16),
-                Card(
-                  child: Padding(
-                    padding: const EdgeInsets.all(16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text('FPS écran',
-                            style: Theme.of(context).textTheme.titleMedium),
-                        const SizedBox(height: 8),
-                        Text(payload.screen.fps != null
-                            ? '${payload.screen.fps!.toStringAsFixed(0)} FPS'
-                                '${payload.screen.processName != null ? ' · ${payload.screen.processName}' : ''}'
-                            : 'indisponible'),
-                      ],
-                    ),
-                  ),
-                ),
-                const SizedBox(height: 16),
                 Text('CPU / RAM (60 dernières secondes)',
                     style: Theme.of(context).textTheme.titleMedium),
                 const SizedBox(height: 8),

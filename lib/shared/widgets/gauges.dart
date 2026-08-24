@@ -114,8 +114,9 @@ class GpuTemperatureList extends StatelessWidget {
   }
 }
 
-/// Affiche une température avec un code couleur selon des seuils configurables.
-/// `null` => "indisponible", jamais de valeur inventée.
+/// Jauge linéaire de température : une ligne = un capteur (CPU, GPU 1, GPU 2…).
+/// La couleur varie en continu du vert au rouge selon [warningThreshold] et
+/// [criticalThreshold]. `null` => piste vide + "N/A", jamais de valeur inventée.
 class TemperatureBadge extends StatelessWidget {
   const TemperatureBadge({
     super.key,
@@ -123,40 +124,78 @@ class TemperatureBadge extends StatelessWidget {
     required this.temperatureC,
     this.warningThreshold = 60,
     this.criticalThreshold = 80,
+    this.minC = 20,
+    this.maxC = 100,
   });
 
   final String label;
   final double? temperatureC;
   final double warningThreshold;
   final double criticalThreshold;
+  final double minC;
+  final double maxC;
+
+  Color _colorFor(double temp) {
+    final t = ((temp - warningThreshold) / (criticalThreshold - warningThreshold))
+        .clamp(0.0, 1.0);
+    return t < 0.5
+        ? Color.lerp(Colors.green, Colors.orange, t / 0.5)!
+        : Color.lerp(Colors.orange, Colors.red, (t - 0.5) / 0.5)!;
+  }
 
   @override
   Widget build(BuildContext context) {
     final temp = temperatureC;
-    Color color;
-    String text;
-    if (temp == null) {
-      color = Colors.grey;
-      text = 'indisponible';
-    } else {
-      color = temp >= criticalThreshold
-          ? Colors.red
-          : (temp >= warningThreshold ? Colors.orange : Colors.green);
-      text = '${temp.toStringAsFixed(1)} °C';
-    }
+    final color = temp == null ? Colors.grey : _colorFor(temp);
+    final ratio =
+        temp == null ? 0.0 : ((temp - minC) / (maxC - minC)).clamp(0.0, 1.0);
 
     return Row(
-      mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(Icons.thermostat, color: color, size: 20),
-        const SizedBox(width: 4),
-        Text('$label : ', style: Theme.of(context).textTheme.bodyMedium),
-        Text(
-          text,
-          style: Theme.of(context)
-              .textTheme
-              .bodyMedium
-              ?.copyWith(color: color, fontWeight: FontWeight.bold),
+        SizedBox(
+          width: 96,
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.bodyMedium,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: SizedBox(
+              height: 10,
+              child: Stack(
+                children: [
+                  Container(color: Colors.grey.withValues(alpha: 0.15)),
+                  TweenAnimationBuilder<double>(
+                    duration: const Duration(milliseconds: 500),
+                    curve: Curves.easeOutCubic,
+                    tween: Tween<double>(begin: 0, end: ratio),
+                    builder: (context, animRatio, _) => FractionallySizedBox(
+                      alignment: Alignment.centerLeft,
+                      widthFactor: animRatio,
+                      child: Container(color: color),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(width: 8),
+        SizedBox(
+          width: 56,
+          child: Text(
+            temp == null ? 'N/A' : '${temp.toStringAsFixed(0)} °C',
+            textAlign: TextAlign.right,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.bold,
+                ),
+          ),
         ),
       ],
     );
