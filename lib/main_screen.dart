@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'pages/connexion_page.dart';
 import 'pages/home_page.dart';
 import 'pages/settings_page.dart';
+import 'pages/tools_page.dart';
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -17,6 +18,7 @@ class _MainScreenState extends State<MainScreen> {
   final List<Widget> _pages = const [
     HomePage(),
     ConnexionPage(),
+    ToolsPage(),
     SettingsPage(),
   ];
 
@@ -25,6 +27,7 @@ class _MainScreenState extends State<MainScreen> {
     return Scaffold(
       body: _pages[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
+        type: BottomNavigationBarType.fixed,
         currentIndex: _currentIndex,
         onTap: (index) {
           setState(() {
@@ -39,6 +42,10 @@ class _MainScreenState extends State<MainScreen> {
           BottomNavigationBarItem(
             icon: Icon(Icons.login),
             label: 'Connexion',
+          ),
+          BottomNavigationBarItem(
+            icon: Icon(Icons.build),
+            label: 'Tools',
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.settings),
