@@ -32,20 +32,39 @@ class WindowsMetricsCollector implements MetricsCollector {
 
   @override
   Future<MetricsPayload> collect() async {
+    final lhm = await _collectFromLhm();
     final cpuInfo = await _collectCpuInfo();
-    final ram = await _collectRam();
-    final temps = await _collectTemperaturesFromLhm();
-    final gpus = await _collectGpus(temps.gpuTempC);
+    final ramInfo = await _collectRam();
+
+    final cpuUsage = lhm.cpuLoad ?? cpuInfo.usagePercent;
+    final cpuTemp = lhm.cpuTemp;
+    final cpuFreq = lhm.cpuFreq ?? cpuInfo.frequencyGhz;
+
+    final ram = RamMetrics(
+      usedMb: lhm.ramUsed?.toInt() ?? ramInfo.usedMb,
+      totalMb: (lhm.ramUsed != null && lhm.ramFree != null) 
+          ? (lhm.ramUsed! + lhm.ramFree!).toInt() 
+          : ramInfo.totalMb,
+      usagePercent: lhm.ramLoad ?? ramInfo.usagePercent,
+    );
+
+    List<GpuMetrics> gpus;
+    if (lhm.gpus.isNotEmpty) {
+      gpus = lhm.gpus;
+    } else {
+      gpus = await _collectGpus(lhm.cpuTemp);
+    }
+
     final screen = await _collectScreen();
 
     return MetricsPayload(
       timestamp: DateTime.now(),
       hostname: Platform.localHostname,
       cpu: CpuMetrics(
-        usagePercent: cpuInfo.usagePercent,
-        temperatureC: temps.cpuTempC,
+        usagePercent: cpuUsage,
+        temperatureC: cpuTemp,
         cores: Platform.numberOfProcessors,
-        frequencyGhz: cpuInfo.frequencyGhz,
+        frequencyGhz: cpuFreq,
       ),
       gpus: gpus,
       ram: ram,
@@ -141,7 +160,7 @@ class WindowsMetricsCollector implements MetricsCollector {
     return const NetworkMetrics();
   }
 
-  Future<_LhmTemperatures> _collectTemperaturesFromLhm() async {
+  Future<_LhmMetrics> _collectFromLhm() async {
     try {
       final uri =
           Uri.parse('http://127.0.0.1:$libreHardwareMonitorPort/data.json');
@@ -154,44 +173,116 @@ class WindowsMetricsCollector implements MetricsCollector {
       final root = jsonDecode(body) as Map<String, dynamic>;
 
       double? cpuTemp;
-      double? gpuTemp;
+      double? cpuLoad;
+      double? cpuFreq;
+      double? ramLoad;
+      double? ramUsed;
+      double? ramFree;
+      final gpusMap = <String, GpuMetrics>{};
 
-      void walk(Map<String, dynamic> node) {
-        final text = (node['Text'] as String?)?.toLowerCase() ?? '';
+      void walk(Map<String, dynamic> node, String hardwareName, String hardwareImage) {
+        final text = (node['Text'] as String?) ?? '';
+        final textLower = text.toLowerCase();
         final value = node['Value'] as String?;
-        if (value != null && value.contains('°C')) {
-          final parsed = double.tryParse(
-              value.replaceAll('°C', '').replaceAll(',', '.').trim());
+        final children = node['Children'] as List?;
+        
+        final imageUrl = (node['ImageURL'] as String?) ?? '';
+        
+        var currentHardware = hardwareName;
+        var currentImage = hardwareImage;
+        if (imageUrl.startsWith('images/')) {
+          currentHardware = text;
+          currentImage = imageUrl;
+        }
+
+        if (value != null) {
+          final cleanVal = value.replaceAll(RegExp(r'[^0-9.,]'), '').replaceAll(',', '.').trim();
+          final parsed = double.tryParse(cleanVal);
+
           if (parsed != null) {
-            if (cpuTemp == null &&
-                (text.contains('cpu package') || text.contains('core (tctl'))) {
-              cpuTemp = parsed;
-            }
-            if (gpuTemp == null && text.contains('gpu') && text.contains('core')) {
-              gpuTemp = parsed;
+            if (currentImage.contains('cpu.png')) {
+              if (textLower.contains('cpu package') || textLower.contains('core (tctl')) {
+                cpuTemp = parsed;
+              } else if (textLower.contains('cpu total')) {
+                cpuLoad = parsed;
+              } else if (textLower.contains('cpu core #1') && textLower.contains('clock')) {
+                cpuFreq = parsed / 1000.0;
+              }
+            } else if (currentImage.contains('ram.png') || currentHardware.toLowerCase().contains('memory')) {
+              if (textLower.contains('memory') && value.contains('%')) {
+                ramLoad = parsed;
+              } else if (textLower.contains('used memory')) {
+                ramUsed = parsed * 1024;
+              } else if (textLower.contains('available memory')) {
+                ramFree = parsed * 1024;
+              }
+            } else if (currentImage.contains('nvidia.png') || 
+                       currentImage.contains('amd.png') || 
+                       currentImage.contains('intel.png') || 
+                       currentImage.contains('gpu.png') ||
+                       currentHardware.toLowerCase().contains('graphics') ||
+                       currentHardware.toLowerCase().contains('geforce') ||
+                       currentHardware.toLowerCase().contains('radeon')) {
+              final gpu = gpusMap[currentHardware] ?? GpuMetrics(name: currentHardware);
+              
+              double? usage = gpu.usagePercent;
+              double? temp = gpu.temperatureC;
+              int? vramUsed = gpu.vramUsedMb;
+              int? vramTotal = gpu.vramTotalMb;
+
+              if (textLower.contains('gpu core') && value.contains('%')) {
+                usage = parsed;
+              } else if (textLower.contains('gpu core') && value.contains('°C')) {
+                temp = parsed;
+              } else if (textLower.contains('gpu memory used') || (textLower.contains('gpu memory') && value.contains('MB') && textLower.contains('used'))) {
+                vramUsed = parsed.toInt();
+              } else if (textLower.contains('gpu memory total') || (textLower.contains('gpu memory') && value.contains('MB') && textLower.contains('total'))) {
+                vramTotal = parsed.toInt();
+              } else if (textLower.contains('gpu memory free')) {
+                if (vramUsed != null) {
+                  vramTotal = vramUsed + parsed.toInt();
+                }
+              }
+
+              gpusMap[currentHardware] = GpuMetrics(
+                name: currentHardware,
+                usagePercent: usage,
+                temperatureC: temp,
+                vramUsedMb: vramUsed,
+                vramTotalMb: vramTotal,
+              );
             }
           }
         }
-        final children = node['Children'] as List?;
+
         if (children != null) {
           for (final child in children) {
-            if (child is Map<String, dynamic>) walk(child);
+            if (child is Map<String, dynamic>) {
+              walk(child, currentHardware, currentImage);
+            }
           }
         }
       }
 
-      walk(root);
+      walk(root, '', '');
       _warnedNoLhm = false;
-      return _LhmTemperatures(cpuTemp, gpuTemp);
+      return _LhmMetrics(
+        cpuTemp: cpuTemp,
+        cpuLoad: cpuLoad,
+        cpuFreq: cpuFreq,
+        ramLoad: ramLoad,
+        ramUsed: ramUsed,
+        ramFree: ramFree,
+        gpus: gpusMap.values.toList(),
+      );
     } catch (e) {
       if (!_warnedNoLhm) {
         stderr.writeln(
             '[WindowsCollector] LibreHardwareMonitor inaccessible sur le port '
-            '$libreHardwareMonitorPort — températures = null. '
-            'Lancez LibreHardwareMonitor avec "Remote Web Server" activé. ($e)');
+            '$libreHardwareMonitorPort — températures/gpus = null. ($e)');
         _warnedNoLhm = true;
       }
-      return const _LhmTemperatures(null, null);
+      return const _LhmMetrics(gpus: []);
     }
   }
 
@@ -316,10 +407,24 @@ class WindowsMetricsCollector implements MetricsCollector {
   }
 }
 
-class _LhmTemperatures {
-  final double? cpuTempC;
-  final double? gpuTempC;
-  const _LhmTemperatures(this.cpuTempC, this.gpuTempC);
+class _LhmMetrics {
+  final double? cpuTemp;
+  final double? cpuLoad;
+  final double? cpuFreq;
+  final double? ramLoad;
+  final double? ramUsed;
+  final double? ramFree;
+  final List<GpuMetrics> gpus;
+
+  const _LhmMetrics({
+    this.cpuTemp,
+    this.cpuLoad,
+    this.cpuFreq,
+    this.ramLoad,
+    this.ramUsed,
+    this.ramFree,
+    required this.gpus,
+  });
 }
 
 class _CpuInfo {

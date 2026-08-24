@@ -191,153 +191,251 @@ class ProSystemMetricsRow extends StatelessWidget {
   final CpuMetrics cpu;
   final List<GpuMetrics> gpus;
   final RamMetrics ram;
+  final ScreenMetrics screen;
 
   const ProSystemMetricsRow({
     super.key,
     required this.cpu,
     required this.gpus,
     required this.ram,
+    required this.screen,
   });
 
   @override
   Widget build(BuildContext context) {
-    final primaryGpu = gpus.isNotEmpty ? gpus.first : const GpuMetrics();
+    final List<Widget> cards = [];
 
-    return Row(
-      children: [
-        Expanded(
-          child: _ProMetricCard(
-            title: 'CPU',
-            icon: Icons.developer_board,
-            usage: cpu.usagePercent,
-            color: Colors.blueAccent,
-            details: [
-              if (cpu.frequencyGhz != null) '${cpu.frequencyGhz!.toStringAsFixed(2)} GHz',
-              if (cpu.temperatureC != null) '${cpu.temperatureC!.toStringAsFixed(0)}°C',
-            ],
-          ),
+    // 1. CPU
+    cards.add(
+      ProAnimatedCircularCard(
+        title: 'CPU',
+        icon: Icons.developer_board,
+        progress: cpu.usagePercent != null ? cpu.usagePercent! / 100.0 : 0.0,
+        centerText: cpu.usagePercent != null ? '${cpu.usagePercent!.toStringAsFixed(0)}%' : 'N/A',
+        color: Colors.blueAccent,
+        details: [
+          if (cpu.frequencyGhz != null) '${cpu.frequencyGhz!.toStringAsFixed(2)} GHz',
+          if (cpu.temperatureC != null) '${cpu.temperatureC!.toStringAsFixed(0)}°C',
+        ],
+      ),
+    );
+
+    // 2. RAM
+    cards.add(
+      ProAnimatedCircularCard(
+        title: 'RAM',
+        icon: Icons.memory,
+        progress: ram.usagePercent != null ? ram.usagePercent! / 100.0 : 0.0,
+        centerText: ram.usagePercent != null ? '${ram.usagePercent!.toStringAsFixed(0)}%' : 'N/A',
+        color: Colors.purpleAccent,
+        details: [
+          if (ram.usedMb != null && ram.totalMb != null)
+            '${(ram.usedMb! / 1024).toStringAsFixed(1)}/${(ram.totalMb! / 1024).toStringAsFixed(0)}G',
+        ],
+      ),
+    );
+
+    // 3. GPUs
+    if (gpus.isEmpty) {
+      cards.add(
+        const ProAnimatedCircularCard(
+          title: 'GPU',
+          icon: Icons.videogame_asset,
+          progress: 0.0,
+          centerText: 'N/A',
+          color: Colors.tealAccent,
+          details: [],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _ProMetricCard(
-            title: 'GPU',
+      );
+    } else {
+      for (var i = 0; i < gpus.length; i++) {
+        final gpu = gpus[i];
+        final gpuName = gpu.name ?? (gpus.length > 1 ? 'GPU ${i + 1}' : 'GPU');
+        final displayName = gpuName
+            .replaceAll('GeForce', '')
+            .replaceAll('Graphics', '')
+            .replaceAll('Corporation', '')
+            .trim();
+
+        cards.add(
+          ProAnimatedCircularCard(
+            title: displayName,
             icon: Icons.videogame_asset,
-            usage: primaryGpu.usagePercent,
-            color: Colors.greenAccent.shade700,
+            progress: gpu.usagePercent != null ? gpu.usagePercent! / 100.0 : 0.0,
+            centerText: gpu.usagePercent != null ? '${gpu.usagePercent!.toStringAsFixed(0)}%' : 'N/A',
+            color: i == 0 ? Colors.tealAccent.shade700 : Colors.teal.shade700,
             details: [
-              if (primaryGpu.vramUsedMb != null && primaryGpu.vramTotalMb != null)
-                '${(primaryGpu.vramUsedMb! / 1024).toStringAsFixed(1)}/${(primaryGpu.vramTotalMb! / 1024).toStringAsFixed(0)}G',
-              if (primaryGpu.temperatureC != null) '${primaryGpu.temperatureC!.toStringAsFixed(0)}°C',
+              if (gpu.vramUsedMb != null && gpu.vramTotalMb != null)
+                '${(gpu.vramUsedMb! / 1024).toStringAsFixed(1)}/${(gpu.vramTotalMb! / 1024).toStringAsFixed(0)}G',
+              if (gpu.temperatureC != null) '${gpu.temperatureC!.toStringAsFixed(0)}°C',
             ],
           ),
+        );
+      }
+    }
+
+    // 4. FPS Screen
+    final fpsVal = screen.fps;
+    final fpsProgress = fpsVal != null ? (fpsVal / 144.0).clamp(0.0, 1.0) : 0.0;
+    final fpsCenterText = fpsVal != null ? fpsVal.toStringAsFixed(0) : 'N/A';
+    cards.add(
+      ProAnimatedCircularCard(
+        title: 'Screen FPS',
+        icon: Icons.speed,
+        progress: fpsProgress,
+        centerText: fpsCenterText,
+        color: Colors.amberAccent.shade700,
+        details: [
+          if (screen.processName != null) screen.processName!,
+          if (fpsVal != null) 'FPS',
+        ],
+      ),
+    );
+
+    // Group cards 2 per line
+    final List<Widget> gridRows = [];
+    for (var i = 0; i < cards.length; i += 2) {
+      final nextIndex = i + 1;
+      gridRows.add(
+        Row(
+          children: [
+            Expanded(child: cards[i]),
+            const SizedBox(width: 12),
+            Expanded(
+              child: nextIndex < cards.length 
+                  ? cards[nextIndex] 
+                  : const SizedBox.shrink(),
+            ),
+          ],
         ),
-        const SizedBox(width: 12),
-        Expanded(
-          child: _ProMetricCard(
-            title: 'RAM',
-            icon: Icons.memory,
-            usage: ram.usagePercent,
-            color: Colors.purpleAccent,
-            details: [
-              if (ram.usedMb != null && ram.totalMb != null)
-                '${(ram.usedMb! / 1024).toStringAsFixed(1)}/${(ram.totalMb! / 1024).toStringAsFixed(0)}G',
-            ],
-          ),
-        ),
-      ],
+      );
+      if (nextIndex < cards.length) {
+        gridRows.add(const SizedBox(height: 12));
+      }
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: gridRows,
     );
   }
 }
 
-class _ProMetricCard extends StatelessWidget {
+class ProAnimatedCircularCard extends StatelessWidget {
   final String title;
   final IconData icon;
-  final double? usage;
+  final double progress;
+  final String centerText;
   final Color color;
   final List<String> details;
 
-  const _ProMetricCard({
+  const ProAnimatedCircularCard({
+    super.key,
     required this.title,
     required this.icon,
-    required this.usage,
+    required this.progress,
+    required this.centerText,
     required this.color,
     required this.details,
   });
 
   @override
   Widget build(BuildContext context) {
-    final hasValue = usage != null;
-    final valText = hasValue ? '${usage!.toStringAsFixed(0)}%' : 'N/A';
-    final progress = hasValue ? (usage! / 100.0).clamp(0.0, 1.0) : 0.0;
+    final hasValue = centerText != 'N/A';
 
     return Container(
       decoration: BoxDecoration(
         color: Theme.of(context).cardColor,
-        borderRadius: BorderRadius.circular(16),
+        borderRadius: BorderRadius.circular(20),
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
+            color: Colors.black.withValues(alpha: 0.15),
+            blurRadius: 10,
+            offset: const Offset(0, 5),
           ),
         ],
         border: Border.all(
-          color: color.withValues(alpha: 0.2),
-          width: 1,
+          color: color.withValues(alpha: 0.25),
+          width: 1.5,
         ),
       ),
       padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 10),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(icon, color: color, size: 20),
-              Text(
-                title,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                      color: Colors.grey.shade400,
-                    ),
+              Icon(icon, color: color, size: 18),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  title,
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.bold,
+                        color: Colors.grey.shade300,
+                        fontSize: 11,
+                      ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          Text(
-            valText,
-            style: Theme.of(context).textTheme.headlineMedium?.copyWith(
-                  fontWeight: FontWeight.bold,
-                  letterSpacing: -0.5,
-                ),
-          ),
-          const SizedBox(height: 8),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(4),
-            child: LinearProgressIndicator(
-              value: progress,
-              backgroundColor: Colors.grey.shade800,
-              valueColor: AlwaysStoppedAnimation<Color>(color),
-              minHeight: 6,
+          const SizedBox(height: 16),
+          SizedBox(
+            width: 70,
+            height: 70,
+            child: TweenAnimationBuilder<double>(
+              duration: const Duration(milliseconds: 600),
+              curve: Curves.easeOutCubic,
+              tween: Tween<double>(begin: 0, end: progress),
+              builder: (context, animVal, _) {
+                return Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    SizedBox(
+                      width: 70,
+                      height: 70,
+                      child: CircularProgressIndicator(
+                        value: animVal,
+                        strokeWidth: 7,
+                        backgroundColor: color.withValues(alpha: 0.12),
+                        valueColor: AlwaysStoppedAnimation<Color>(color),
+                      ),
+                    ),
+                    Text(
+                      centerText,
+                      style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.bold,
+                            color: hasValue ? Colors.white : Colors.grey,
+                            fontSize: 14,
+                          ),
+                    ),
+                  ],
+                );
+              },
             ),
           ),
           if (details.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 14),
             Wrap(
-              spacing: 6,
+              spacing: 4,
               runSpacing: 4,
+              alignment: WrapAlignment.center,
               children: details.map((detail) {
                 return Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
                     color: Colors.grey.shade900,
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
                     detail,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
                           color: Colors.grey.shade300,
-                          fontSize: 10,
+                          fontSize: 9,
                           fontWeight: FontWeight.bold,
                         ),
                   ),

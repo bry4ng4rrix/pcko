@@ -79,6 +79,7 @@ class _ServerHomeViewState extends State<ServerHomeView> {
                     cpu: payload.cpu,
                     gpus: payload.gpus,
                     ram: payload.ram,
+                    screen: payload.screen,
                   ),
                   const SizedBox(height: 24),
                   Card(
