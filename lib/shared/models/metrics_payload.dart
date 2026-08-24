@@ -43,12 +43,18 @@ class GpuMetrics {
   final int? vramUsedMb;
   final int? vramTotalMb;
 
+  /// `true` si [temperatureC] n'est pas mesurée par un capteur GPU dédié
+  /// mais reprise d'ailleurs (ex. température package CPU pour un iGPU
+  /// Intel, qui partage le même die et n'a pas de capteur séparé).
+  final bool temperatureIsEstimated;
+
   const GpuMetrics({
     this.usagePercent,
     this.temperatureC,
     this.name,
     this.vramUsedMb,
     this.vramTotalMb,
+    this.temperatureIsEstimated = false,
   });
 
   factory GpuMetrics.fromJson(Map<String, dynamic> json) => GpuMetrics(
@@ -57,6 +63,7 @@ class GpuMetrics {
         name: json['name'] as String?,
         vramUsedMb: _toInt(json['vram_used_mb']),
         vramTotalMb: _toInt(json['vram_total_mb']),
+        temperatureIsEstimated: json['temperature_is_estimated'] as bool? ?? false,
       );
 
   Map<String, dynamic> toJson() => {
@@ -65,6 +72,7 @@ class GpuMetrics {
         'name': name,
         'vram_used_mb': vramUsedMb,
         'vram_total_mb': vramTotalMb,
+        'temperature_is_estimated': temperatureIsEstimated,
       };
 }
 

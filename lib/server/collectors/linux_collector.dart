@@ -44,7 +44,7 @@ class LinuxMetricsCollector implements MetricsCollector {
     final ram = await _collectRam();
     final network = await _collectNetwork();
     final pingMs = await _collectPing();
-    final gpus = await _collectGpus();
+    final gpus = await _collectGpus(cpu.temperatureC);
     final screen = await _collectScreen();
 
     return MetricsPayload(
@@ -316,10 +316,10 @@ class LinuxMetricsCollector implements MetricsCollector {
   /// les configurations hybrides type laptop, ex. Intel iGPU + NVIDIA GPU
   /// dédié). Si aucun GPU n'est détecté, renvoie une entrée unique
   /// "indisponible" plutôt qu'une liste vide.
-  Future<List<GpuMetrics>> _collectGpus() async {
+  Future<List<GpuMetrics>> _collectGpus(double? cpuTempFallback) async {
     final gpus = <GpuMetrics>[
       ...await _collectNvidiaGpus(),
-      ...await _collectSysfsGpus(),
+      ...await _collectSysfsGpus(cpuTempFallback),
     ];
     if (gpus.isNotEmpty) return gpus;
     return const [GpuMetrics()];
@@ -371,10 +371,12 @@ class LinuxMetricsCollector implements MetricsCollector {
   }
 
   /// GPU non-NVIDIA (Intel/AMD, iGPU ou dédié) via `/sys/class/drm/card*` —
-  /// best-effort : selon le driver, l'usage, la VRAM et la température
-  /// peuvent rester `null` (ex. Intel i915 n'expose pas toujours de capteur
-  /// de température GPU dédié, distinct du CPU).
-  Future<List<GpuMetrics>> _collectSysfsGpus() async {
+  /// best-effort : selon le driver, l'usage et la VRAM peuvent rester `null`.
+  /// Pour Intel, si `gpu_busy_percent` est absent, on retente via
+  /// `intel_gpu_top` (nécessite CAP_PERFMON, voir `_collectIntelGpuUsage`).
+  /// [cpuTempFallback] est utilisé comme approximation de la température
+  /// Intel si aucun capteur GPU dédié n'existe (die partagé avec le CPU).
+  Future<List<GpuMetrics>> _collectSysfsGpus(double? cpuTempFallback) async {
     final gpus = <GpuMetrics>[];
     try {
       final drmDir = Directory('/sys/class/drm');
@@ -440,6 +442,9 @@ class LinuxMetricsCollector implements MetricsCollector {
           usagePercent =
               double.tryParse((await busyFile.readAsString()).trim());
         }
+        if (usagePercent == null && vendorHex == '0x8086') {
+          usagePercent = await _collectIntelGpuUsage();
+        }
 
         int? vramUsedMb;
         int? vramTotalMb;
@@ -472,9 +477,18 @@ class LinuxMetricsCollector implements MetricsCollector {
           }
         } catch (_) {}
 
+        var temperatureIsEstimated = false;
+        if (temperatureC == null &&
+            vendorHex == '0x8086' &&
+            cpuTempFallback != null) {
+          temperatureC = cpuTempFallback;
+          temperatureIsEstimated = true;
+        }
+
         gpus.add(GpuMetrics(
           usagePercent: usagePercent,
           temperatureC: temperatureC,
+          temperatureIsEstimated: temperatureIsEstimated,
           name: name,
           vramUsedMb: vramUsedMb,
           vramTotalMb: vramTotalMb,
@@ -484,6 +498,57 @@ class LinuxMetricsCollector implements MetricsCollector {
       stderr.writeln('[LinuxCollector] Détection GPU sysfs impossible : $e');
     }
     return gpus;
+  }
+
+  /// Usage GPU Intel via `intel_gpu_top -J` (prend le busy% le plus élevé
+  /// parmi les moteurs — rendu, vidéo, etc.). Throttlé à une mesure réelle
+  /// toutes les 2s (chaque appel bloque ~500ms). Nécessite le paquet
+  /// `intel-gpu-tools` et la capability CAP_PERFMON sur le binaire
+  /// (`sudo setcap cap_perfmon=+ep $(which intel_gpu_top)`) pour fonctionner
+  /// sans root ; sinon reste `null`, jamais une valeur inventée.
+  Future<double?> _collectIntelGpuUsage() async {
+    final now = DateTime.now();
+    if (_intelUsageCachedAt != null &&
+        now.difference(_intelUsageCachedAt!) < const Duration(seconds: 2)) {
+      return _intelUsageCached;
+    }
+    _intelUsageCachedAt = now;
+    try {
+      final result = await Process.run(
+        'intel_gpu_top',
+        ['-J', '-o', '-', '-s', '500', '-n', '1'],
+      ).timeout(const Duration(seconds: 2));
+      if (result.exitCode != 0) {
+        _intelUsageCached = null;
+        return null;
+      }
+      final decoded = jsonDecode(result.stdout as String);
+      final sample =
+          decoded is List ? (decoded.isNotEmpty ? decoded.last : null) : decoded;
+      final engines =
+          sample is Map<String, dynamic> ? sample['engines'] : null;
+      double? best;
+      if (engines is Map<String, dynamic>) {
+        for (final engine in engines.values) {
+          if (engine is Map<String, dynamic>) {
+            final busy = engine['busy'];
+            if (busy is num && (best == null || busy > best)) {
+              best = busy.toDouble();
+            }
+          }
+        }
+      }
+      _intelUsageCached = best;
+      return best;
+    } catch (e) {
+      _intelUsageCached = null;
+      if (!_warnedNoIntelTop) {
+        stderr.writeln(
+            '[LinuxCollector] `intel_gpu_top` indisponible, usage Intel = null ($e)');
+        _warnedNoIntelTop = true;
+      }
+      return null;
+    }
   }
 
   /// FPS réel de rendu (bureau/jeu au premier plan).
