@@ -288,10 +288,22 @@ class LinuxMetricsCollector implements MetricsCollector {
     }
   }
 
-  /// Liste tous les GPU détectés (`nvidia-smi` renvoie une ligne par carte
-  /// sur les systèmes multi-GPU). Si aucun GPU n'est détecté, renvoie une
-  /// entrée unique "indisponible" plutôt qu'une liste vide.
+  /// Liste tous les GPU détectés, NVIDIA et non-NVIDIA confondus (utile sur
+  /// les configurations hybrides type laptop, ex. Intel iGPU + NVIDIA GPU
+  /// dédié). Si aucun GPU n'est détecté, renvoie une entrée unique
+  /// "indisponible" plutôt qu'une liste vide.
   Future<List<GpuMetrics>> _collectGpus() async {
+    final gpus = <GpuMetrics>[
+      ...await _collectNvidiaGpus(),
+      ...await _collectSysfsGpus(),
+    ];
+    if (gpus.isNotEmpty) return gpus;
+    return const [GpuMetrics()];
+  }
+
+  /// GPU NVIDIA (un ou plusieurs, `nvidia-smi` renvoie une ligne par carte
+  /// sur les systèmes multi-GPU) — usage/température/VRAM précis.
+  Future<List<GpuMetrics>> _collectNvidiaGpus() async {
     try {
       final result = await Process.run('nvidia-smi', [
         '--query-gpu=utilization.gpu,temperature.gpu,name,memory.used,memory.total',
@@ -322,16 +334,132 @@ class LinuxMetricsCollector implements MetricsCollector {
             ));
           }
         }
-        if (gpus.isNotEmpty) return gpus;
+        return gpus;
       }
     } catch (e) {
       if (!_warnedNoGpu) {
         stderr.writeln(
-            '[LinuxCollector] `nvidia-smi` indisponible, métriques GPU = null ($e)');
+            '[LinuxCollector] `nvidia-smi` indisponible ($e)');
         _warnedNoGpu = true;
       }
     }
-    return const [GpuMetrics()];
+    return const [];
+  }
+
+  /// GPU non-NVIDIA (Intel/AMD, iGPU ou dédié) via `/sys/class/drm/card*` —
+  /// best-effort : selon le driver, l'usage, la VRAM et la température
+  /// peuvent rester `null` (ex. Intel i915 n'expose pas toujours de capteur
+  /// de température GPU dédié, distinct du CPU).
+  Future<List<GpuMetrics>> _collectSysfsGpus() async {
+    final gpus = <GpuMetrics>[];
+    try {
+      final drmDir = Directory('/sys/class/drm');
+      if (!await drmDir.exists()) return gpus;
+
+      final cardEntries = await drmDir
+          .list()
+          .where((e) => RegExp(r'^card\d+$').hasMatch(e.path.split('/').last))
+          .toList();
+      cardEntries.sort((a, b) => a.path.compareTo(b.path));
+
+      String? lspciOutput;
+      try {
+        final result = await Process.run('lspci', ['-mm']);
+        if (result.exitCode == 0) lspciOutput = result.stdout as String;
+      } catch (_) {
+        // `lspci` (pciutils) absent : on retombe sur un nom générique.
+      }
+
+      for (final cardEntry in cardEntries) {
+        final devicePath = '${cardEntry.path}/device';
+        final vendorFile = File('$devicePath/vendor');
+        if (!await vendorFile.exists()) continue;
+        final vendorHex =
+            (await vendorFile.readAsString()).trim().toLowerCase();
+
+        // NVIDIA est déjà couvert par `nvidia-smi` (métriques plus fiables) :
+        // on l'ignore ici pour éviter les doublons.
+        if (vendorHex == '0x10de') continue;
+
+        String? slot;
+        try {
+          final resolved =
+              await Directory(devicePath).resolveSymbolicLinks();
+          slot = resolved.split('/').last;
+        } catch (_) {}
+
+        String? name;
+        if (lspciOutput != null && slot != null) {
+          // lspci -mm identifie le slot sans le domaine PCI ("0000:").
+          final shortSlot = slot.startsWith('0000:') ? slot.substring(5) : slot;
+          for (final line in lspciOutput.split('\n')) {
+            if (!line.startsWith(shortSlot)) continue;
+            final quoted = RegExp(r'"([^"]*)"')
+                .allMatches(line)
+                .map((m) => m.group(1) ?? '')
+                .toList();
+            if (quoted.length >= 3) {
+              name = '${quoted[1]} ${quoted[2]}'.trim();
+            }
+            break;
+          }
+        }
+        name ??= switch (vendorHex) {
+          '0x8086' => 'Intel Graphics',
+          '0x1002' => 'AMD Graphics',
+          _ => 'GPU',
+        };
+
+        double? usagePercent;
+        final busyFile = File('$devicePath/gpu_busy_percent');
+        if (await busyFile.exists()) {
+          usagePercent =
+              double.tryParse((await busyFile.readAsString()).trim());
+        }
+
+        int? vramUsedMb;
+        int? vramTotalMb;
+        final vramUsedFile = File('$devicePath/mem_info_vram_used');
+        final vramTotalFile = File('$devicePath/mem_info_vram_total');
+        if (await vramUsedFile.exists() && await vramTotalFile.exists()) {
+          final usedBytes =
+              int.tryParse((await vramUsedFile.readAsString()).trim());
+          final totalBytes =
+              int.tryParse((await vramTotalFile.readAsString()).trim());
+          if (usedBytes != null) vramUsedMb = usedBytes ~/ (1024 * 1024);
+          if (totalBytes != null) vramTotalMb = totalBytes ~/ (1024 * 1024);
+        }
+
+        double? temperatureC;
+        try {
+          final hwmonDir = Directory('$devicePath/hwmon');
+          if (await hwmonDir.exists()) {
+            for (final sub in await hwmonDir.list().toList()) {
+              final tempFile = File('${sub.path}/temp1_input');
+              if (await tempFile.exists()) {
+                final raw =
+                    int.tryParse((await tempFile.readAsString()).trim());
+                if (raw != null) {
+                  temperatureC = raw / 1000.0;
+                  break;
+                }
+              }
+            }
+          }
+        } catch (_) {}
+
+        gpus.add(GpuMetrics(
+          usagePercent: usagePercent,
+          temperatureC: temperatureC,
+          name: name,
+          vramUsedMb: vramUsedMb,
+          vramTotalMb: vramTotalMb,
+        ));
+      }
+    } catch (e) {
+      stderr.writeln('[LinuxCollector] Détection GPU sysfs impossible : $e');
+    }
+    return gpus;
   }
 
   /// FPS réel de rendu (bureau/jeu au premier plan).
