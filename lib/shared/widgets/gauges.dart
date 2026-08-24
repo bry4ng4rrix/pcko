@@ -160,11 +160,17 @@ class TemperatureBadge extends StatelessWidget {
       children: [
         SizedBox(
           width: 96,
-          child: Text(
-            label,
-            style: Theme.of(context).textTheme.bodyMedium,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+          child: Tooltip(
+            message: isEstimated
+                ? '$label : température estimée via le package CPU '
+                    '(pas de capteur GPU dédié, die partagé)'
+                : label,
+            child: Text(
+              label,
+              style: Theme.of(context).textTheme.bodyMedium,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
           ),
         ),
         const SizedBox(width: 8),
@@ -193,9 +199,11 @@ class TemperatureBadge extends StatelessWidget {
         ),
         const SizedBox(width: 8),
         SizedBox(
-          width: 56,
+          width: 68,
           child: Text(
-            temp == null ? 'N/A' : '${temp.toStringAsFixed(0)} °C',
+            temp == null
+                ? 'N/A'
+                : '${isEstimated ? '≈' : ''}${temp.toStringAsFixed(0)} °C',
             textAlign: TextAlign.right,
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: color,
