@@ -6,6 +6,9 @@ import 'package:flutter/foundation.dart';
 
 import '../shared/models/metrics_payload.dart';
 import '../shared/util/network_util.dart';
+import 'actions/linux_system_actions.dart';
+import 'actions/system_actions.dart';
+import 'actions/windows_system_actions.dart';
 import 'collectors/linux_collector.dart';
 import 'collectors/metrics_collector.dart';
 import 'collectors/windows_collector.dart';
@@ -18,7 +21,12 @@ class ServerController extends ChangeNotifier {
     _collector = Platform.isWindows
         ? WindowsMetricsCollector(libreHardwareMonitorPort: libreHardwareMonitorPort)
         : LinuxMetricsCollector();
+    _actions = Platform.isWindows
+        ? WindowsSystemActions()
+        : LinuxSystemActions();
   }
+
+  late SystemActions _actions;
 
   int port = 9090;
   int libreHardwareMonitorPort = 8085;
@@ -173,9 +181,34 @@ class ServerController extends ChangeNotifier {
         case 'ping':
           socket.add(jsonEncode({'type': 'pong'}));
           break;
+        case 'system_action':
+          _runSystemAction(socket, json['action'] as String?);
+          break;
       }
     } catch (_) {
       // Message de contrôle malformé : on l'ignore silencieusement.
+    }
+  }
+
+  Future<void> _runSystemAction(WebSocket socket, String? action) async {
+    final ActionResult result = switch (action) {
+      'lock' => await _actions.lockScreen(),
+      'task_manager' => await _actions.openTaskManager(),
+      'volume_up' => await _actions.volumeUp(),
+      'volume_down' => await _actions.volumeDown(),
+      'brightness_up' => await _actions.brightnessUp(),
+      'brightness_down' => await _actions.brightnessDown(),
+      _ => ActionResult.fail('Action inconnue : $action'),
+    };
+    try {
+      socket.add(jsonEncode({
+        'type': 'system_action_result',
+        'action': action,
+        'success': result.success,
+        'message': result.message,
+      }));
+    } catch (_) {
+      // Le client a peut-être déjà fermé la connexion.
     }
   }
 

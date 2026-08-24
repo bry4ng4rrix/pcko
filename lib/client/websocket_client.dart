@@ -9,6 +9,17 @@ import '../shared/models/metrics_payload.dart';
 
 enum ConnectionStatus { disconnected, connecting, connected, reconnecting }
 
+/// Résultat d'une action système (verrouillage, volume…) demandée au PC,
+/// renvoyé par le serveur — jamais un succès supposé côté client.
+class ClientActionResult {
+  final String action;
+  final bool success;
+  final String? message;
+
+  const ClientActionResult(
+      {required this.action, required this.success, this.message});
+}
+
 /// Contrôleur du rôle "client" (téléphone Android).
 /// Gère la connexion WebSocket vers le PC, la réception des métriques,
 /// et la reconnexion automatique (backoff exponentiel, max 30s).
@@ -30,6 +41,14 @@ class ClientController extends ChangeNotifier {
   Timer? _reconnectTimer;
   int _reconnectAttempts = 0;
   bool _manualDisconnect = false;
+
+  final _actionResultController =
+      StreamController<ClientActionResult>.broadcast();
+
+  /// Résultats des actions système (`sendSystemAction`), un évènement par
+  /// réponse du serveur — à écouter côté UI pour afficher un feedback ponctuel.
+  Stream<ClientActionResult> get actionResults =>
+      _actionResultController.stream;
 
   bool get isConnected => status == ConnectionStatus.connected;
 
@@ -91,6 +110,13 @@ class ClientController extends ChangeNotifier {
         case 'ping':
           _channel?.sink.add(jsonEncode({'type': 'pong'}));
           break;
+        case 'system_action_result':
+          _actionResultController.add(ClientActionResult(
+            action: json['action'] as String? ?? '',
+            success: json['success'] as bool? ?? false,
+            message: json['message'] as String?,
+          ));
+          break;
       }
       notifyListeners();
     } catch (e) {
@@ -127,6 +153,13 @@ class ClientController extends ChangeNotifier {
     _channel?.sink.add(jsonEncode({'type': 'set_interval', 'interval_ms': ms}));
   }
 
+  /// Demande au PC connecté d'exécuter une action système (voir
+  /// `SystemActions` côté serveur pour la liste : lock, task_manager,
+  /// volume_up, volume_down, brightness_up, brightness_down).
+  void sendSystemAction(String action) {
+    _channel?.sink.add(jsonEncode({'type': 'system_action', 'action': action}));
+  }
+
   void disconnect() {
     _manualDisconnect = true;
     _reconnectTimer?.cancel();
@@ -144,6 +177,7 @@ class ClientController extends ChangeNotifier {
     _reconnectTimer?.cancel();
     _subscription?.cancel();
     _channel?.sink.close();
+    _actionResultController.close();
     super.dispose();
   }
 }
