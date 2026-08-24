@@ -107,6 +107,7 @@ class GpuTemperatureList extends StatelessWidget {
           TemperatureBadge(
             label: _gpuLabel(gpus[i], i, gpus.length),
             temperatureC: gpus[i].temperatureC,
+            isEstimated: gpus[i].temperatureIsEstimated,
           ),
         ],
       ],
@@ -126,6 +127,7 @@ class TemperatureBadge extends StatelessWidget {
     this.criticalThreshold = 80,
     this.minC = 20,
     this.maxC = 100,
+    this.isEstimated = false,
   });
 
   final String label;
@@ -134,6 +136,10 @@ class TemperatureBadge extends StatelessWidget {
   final double criticalThreshold;
   final double minC;
   final double maxC;
+
+  /// `true` si la valeur n'est pas mesurée par un capteur dédié (ex. temp.
+  /// CPU réutilisée pour un iGPU sans capteur GPU séparé) — affiche "≈".
+  final bool isEstimated;
 
   Color _colorFor(double temp) {
     final t = ((temp - warningThreshold) / (criticalThreshold - warningThreshold))
