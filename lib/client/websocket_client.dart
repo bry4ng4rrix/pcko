@@ -1,0 +1,149 @@
+import 'dart:async';
+import 'dart:convert';
+import 'dart:math';
+
+import 'package:flutter/foundation.dart';
+import 'package:web_socket_channel/web_socket_channel.dart';
+
+import '../shared/models/metrics_payload.dart';
+
+enum ConnectionStatus { disconnected, connecting, connected, reconnecting }
+
+/// Contrôleur du rôle "client" (téléphone Android).
+/// Gère la connexion WebSocket vers le PC, la réception des métriques,
+/// et la reconnexion automatique (backoff exponentiel, max 30s).
+class ClientController extends ChangeNotifier {
+  static const int _maxHistoryLength = 60; // fenêtre glissante ~60s
+  static const int _maxBackoffSeconds = 30;
+
+  ConnectionStatus status = ConnectionStatus.disconnected;
+  String? serverIp;
+  int? serverPort;
+  String? serverHostname;
+  String? lastError;
+
+  MetricsPayload? lastPayload;
+  final List<MetricsPayload> history = [];
+
+  WebSocketChannel? _channel;
+  StreamSubscription? _subscription;
+  Timer? _reconnectTimer;
+  int _reconnectAttempts = 0;
+  bool _manualDisconnect = false;
+
+  bool get isConnected => status == ConnectionStatus.connected;
+
+  Future<void> connect(String ip, int port) async {
+    _manualDisconnect = false;
+    serverIp = ip;
+    serverPort = port;
+    _reconnectAttempts = 0;
+    await _openSocket();
+  }
+
+  Future<void> _openSocket() async {
+    _reconnectTimer?.cancel();
+    if (serverIp == null || serverPort == null) return;
+
+    status = ConnectionStatus.connecting;
+    lastError = null;
+    notifyListeners();
+
+    try {
+      final uri = Uri.parse('ws://$serverIp:$serverPort');
+      final channel = WebSocketChannel.connect(uri);
+      await channel.ready;
+      _channel = channel;
+      _reconnectAttempts = 0;
+      status = ConnectionStatus.connected;
+      notifyListeners();
+
+      _subscription = channel.stream.listen(
+        _handleMessage,
+        onDone: _handleDisconnection,
+        onError: (e) {
+          lastError = e.toString();
+          _handleDisconnection();
+        },
+        cancelOnError: true,
+      );
+    } catch (e) {
+      lastError = 'Connexion impossible : $e';
+      _handleDisconnection();
+    }
+  }
+
+  void _handleMessage(dynamic raw) {
+    try {
+      final json = jsonDecode(raw as String) as Map<String, dynamic>;
+      switch (json['type']) {
+        case 'hello':
+          serverHostname = json['hostname'] as String?;
+          break;
+        case 'metrics':
+          final payload = MetricsPayload.fromJson(json);
+          lastPayload = payload;
+          history.add(payload);
+          while (history.length > _maxHistoryLength) {
+            history.removeAt(0);
+          }
+          break;
+        case 'ping':
+          _channel?.sink.add(jsonEncode({'type': 'pong'}));
+          break;
+      }
+      notifyListeners();
+    } catch (e) {
+      lastError = 'Message invalide reçu du serveur : $e';
+    }
+  }
+
+  void _handleDisconnection() {
+    _subscription?.cancel();
+    _subscription = null;
+    _channel = null;
+
+    if (_manualDisconnect) {
+      status = ConnectionStatus.disconnected;
+      notifyListeners();
+      return;
+    }
+
+    status = ConnectionStatus.reconnecting;
+    notifyListeners();
+    _scheduleReconnect();
+  }
+
+  void _scheduleReconnect() {
+    final delaySeconds =
+        min(pow(2, _reconnectAttempts).toInt(), _maxBackoffSeconds);
+    _reconnectAttempts++;
+    _reconnectTimer?.cancel();
+    _reconnectTimer = Timer(Duration(seconds: delaySeconds), _openSocket);
+  }
+
+  /// Demande au serveur de changer l'intervalle de rafraîchissement.
+  void requestInterval(int ms) {
+    _channel?.sink.add(jsonEncode({'type': 'set_interval', 'interval_ms': ms}));
+  }
+
+  void disconnect() {
+    _manualDisconnect = true;
+    _reconnectTimer?.cancel();
+    _subscription?.cancel();
+    _channel?.sink.close();
+    _channel = null;
+    status = ConnectionStatus.disconnected;
+    lastPayload = null;
+    history.clear();
+    notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _reconnectTimer?.cancel();
+    _subscription?.cancel();
+    _channel?.sink.close();
+    super.dispose();
+  }
+}
