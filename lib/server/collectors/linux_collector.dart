@@ -34,6 +34,9 @@ class LinuxMetricsCollector implements MetricsCollector {
   bool _warnedNoFps = false;
   double? _lastPingMs;
   DateTime? _lastPingAt;
+  double? _intelUsageCached;
+  DateTime? _intelUsageCachedAt;
+  bool _warnedNoIntelTop = false;
 
   @override
   Future<MetricsPayload> collect() async {
