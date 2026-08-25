@@ -182,7 +182,11 @@ class ServerController extends ChangeNotifier {
           socket.add(jsonEncode({'type': 'pong'}));
           break;
         case 'system_action':
-          _runSystemAction(socket, json['action'] as String?);
+          _runSystemAction(
+              socket, json['action'] as String?, json['value'] as int?);
+          break;
+        case 'get_system_state':
+          _sendSystemState(socket);
           break;
       }
     } catch (_) {
@@ -190,14 +194,17 @@ class ServerController extends ChangeNotifier {
     }
   }
 
-  Future<void> _runSystemAction(WebSocket socket, String? action) async {
+  Future<void> _runSystemAction(
+      WebSocket socket, String? action, int? value) async {
     final ActionResult result = switch (action) {
       'lock' => await _actions.lockScreen(),
       'task_manager' => await _actions.openTaskManager(),
-      'volume_up' => await _actions.volumeUp(),
-      'volume_down' => await _actions.volumeDown(),
-      'brightness_up' => await _actions.brightnessUp(),
-      'brightness_down' => await _actions.brightnessDown(),
+      'volume_set' when value != null => await _actions.setVolume(value),
+      'brightness_set' when value != null =>
+        await _actions.setBrightness(value),
+      'media_previous' => await _actions.mediaPrevious(),
+      'media_play_pause' => await _actions.mediaPlayPause(),
+      'media_next' => await _actions.mediaNext(),
       _ => ActionResult.fail('Action inconnue : $action'),
     };
     try {
@@ -206,6 +213,20 @@ class ServerController extends ChangeNotifier {
         'action': action,
         'success': result.success,
         'message': result.message,
+      }));
+    } catch (_) {
+      // Le client a peut-être déjà fermé la connexion.
+    }
+  }
+
+  Future<void> _sendSystemState(WebSocket socket) async {
+    final volume = await _actions.getVolume();
+    final brightness = await _actions.getBrightness();
+    try {
+      socket.add(jsonEncode({
+        'type': 'system_state',
+        'volume': volume,
+        'brightness': brightness,
       }));
     } catch (_) {
       // Le client a peut-être déjà fermé la connexion.
