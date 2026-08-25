@@ -3,12 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../../shared/widgets/media_control_bar.dart';
+import '../../shared/widgets/percent_slider_tile.dart';
 import '../../shared/widgets/tool_button.dart';
 import '../websocket_client.dart';
 
 /// Page Tools côté téléphone : contrôle à distance du PC connecté
-/// (verrouillage, gestionnaire de tâches, volume, luminosité), exécuté
-/// par le serveur — voir `ClientController.sendSystemAction`.
+/// (verrouillage, gestionnaire de tâches, volume, luminosité, média,
+/// capture d'écran/vidéo), exécuté par le serveur — voir
+/// `ClientController.sendSystemAction`.
 class ClientToolsView extends StatefulWidget {
   const ClientToolsView({super.key});
 
@@ -18,6 +21,10 @@ class ClientToolsView extends StatefulWidget {
 
 class _ClientToolsViewState extends State<ClientToolsView> {
   StreamSubscription<ClientActionResult>? _subscription;
+
+  int? _localVolume;
+  int? _localBrightness;
+  bool _isPlaying = true;
 
   @override
   void initState() {
@@ -30,9 +37,8 @@ class _ClientToolsViewState extends State<ClientToolsView> {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Text(result.success
-            ? _successLabel(result.action)
-            : (result.message ?? 'Échec de l\'action.')),
+        content: Text(result.message ??
+            (result.success ? _successLabel(result.action) : 'Échec de l\'action.')),
         backgroundColor:
             result.success ? Colors.green.shade700 : Colors.red.shade700,
       ),
@@ -42,10 +48,10 @@ class _ClientToolsViewState extends State<ClientToolsView> {
   String _successLabel(String action) => switch (action) {
         'lock' => 'PC verrouillé.',
         'task_manager' => 'Gestionnaire de tâches ouvert.',
-        'volume_up' => 'Volume augmenté.',
-        'volume_down' => 'Volume réduit.',
-        'brightness_up' => 'Luminosité augmentée.',
-        'brightness_down' => 'Luminosité réduite.',
+        'media_previous' => 'Piste précédente.',
+        'media_play_pause' => 'Lecture/pause.',
+        'media_next' => 'Piste suivante.',
+        'screenshot' => 'Capture d\'écran effectuée.',
         _ => 'Action effectuée.',
       };
 
@@ -78,7 +84,12 @@ class _ClientToolsViewState extends State<ClientToolsView> {
           );
         }
 
-        void send(String action) => client.sendSystemAction(action);
+        void send(String action, {int? value}) =>
+            client.sendSystemAction(action, value: value);
+
+        final volume = _localVolume ?? client.systemState?.volume;
+        final brightness = _localBrightness ?? client.systemState?.brightness;
+        final recording = client.systemState?.recording ?? false;
 
         return SafeArea(
           child: Padding(
@@ -95,43 +106,87 @@ class _ClientToolsViewState extends State<ClientToolsView> {
                       .bodyMedium
                       ?.copyWith(color: Colors.grey),
                 ),
-                const SizedBox(height: 24),
+                const SizedBox(height: 20),
                 Expanded(
-                  child: GridView.count(
-                    crossAxisCount: 2,
-                    mainAxisSpacing: 16,
-                    crossAxisSpacing: 16,
-                    childAspectRatio: 1.3,
+                  child: ListView(
                     children: [
-                      ToolButton(
-                        icon: Icons.lock,
-                        label: 'Verrouiller',
-                        onTap: () => send('lock'),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ToolButton(
+                              icon: Icons.lock,
+                              label: 'Verrouiller',
+                              onTap: () => send('lock'),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: ToolButton(
+                              icon: Icons.bar_chart,
+                              label: 'Gestionnaire de tâches',
+                              onTap: () => send('task_manager'),
+                            ),
+                          ),
+                        ],
                       ),
-                      ToolButton(
-                        icon: Icons.bar_chart,
-                        label: 'Gestionnaire de tâches',
-                        onTap: () => send('task_manager'),
-                      ),
-                      ToolButton(
+                      const SizedBox(height: 16),
+                      PercentSliderTile(
                         icon: Icons.volume_up,
-                        label: 'Volume +',
-                        onTap: () => send('volume_up'),
+                        label: 'Volume',
+                        value: volume,
+                        onChanged: (v) => setState(() => _localVolume = v),
+                        onChangeEnd: (v) {
+                          send('volume_set', value: v);
+                          setState(() => _localVolume = null);
+                        },
                       ),
-                      ToolButton(
-                        icon: Icons.volume_down,
-                        label: 'Volume -',
-                        onTap: () => send('volume_down'),
+                      const SizedBox(height: 12),
+                      PercentSliderTile(
+                        icon: Icons.brightness_6,
+                        label: 'Luminosité',
+                        value: brightness,
+                        onChanged: (v) => setState(() => _localBrightness = v),
+                        onChangeEnd: (v) {
+                          send('brightness_set', value: v);
+                          setState(() => _localBrightness = null);
+                        },
                       ),
-                      ToolButton(
-                        icon: Icons.brightness_high,
-                        label: 'Luminosité +',
-                        onTap: () => send('brightness_up'),
+                      const SizedBox(height: 16),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: ToolButton(
+                              icon: Icons.camera_alt,
+                              label: 'Capture d\'écran',
+                              onTap: () => send('screenshot'),
+                            ),
+                          ),
+                          const SizedBox(width: 16),
+                          Expanded(
+                            child: ToolButton(
+                              icon: recording
+                                  ? Icons.stop_circle
+                                  : Icons.fiber_manual_record,
+                              label: recording
+                                  ? 'Arrêter la capture vidéo'
+                                  : 'Démarrer la capture vidéo',
+                              color: recording ? Colors.red : null,
+                              onTap: () => send(recording
+                                  ? 'video_capture_stop'
+                                  : 'video_capture_start'),
+                            ),
+                          ),
+                        ],
                       ),
-                      ToolButton(
-                        icon: Icons.brightness_low,
-                        label: 'Luminosité -',
-                        onTap: () => send('brightness_down'),
+                      const SizedBox(height: 16),
+                      MediaControlBar(
+                        isPlaying: _isPlaying,
+                        onPrevious: () => send('media_previous'),
+                        onPlayPause: () {
+                          setState(() => _isPlaying = !_isPlaying);
+                          send('media_play_pause');
+                        },
+                        onNext: () => send('media_next'),
                       ),
                     ],
                   ),

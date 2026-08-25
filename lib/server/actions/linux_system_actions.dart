@@ -21,16 +21,15 @@ class LinuxSystemActions implements SystemActions {
 
   String get _captureDir {
     final home = Platform.environment['HOME'] ?? '.';
-    return p.join(home, 'Pictures', 'pcko');
+    return '$home/Pictures/pcko';
   }
 
   String _timestampedPath(String extension) {
     final dir = Directory(_captureDir);
     if (!dir.existsSync()) dir.createSync(recursive: true);
-    final stamp = DateTime.now()
-        .toIso8601String()
-        .replaceAll(RegExp(r'[:.]'), '-');
-    return p.join(_captureDir, 'pcko_$stamp.$extension');
+    final stamp =
+        DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.]'), '-');
+    return '$_captureDir/pcko_$stamp.$extension';
   }
 
   @override
@@ -157,6 +156,89 @@ class LinuxSystemActions implements SystemActions {
     }
     return const ActionResult.fail(
         'Aucun contrôleur média trouvé (installez `playerctl`).');
+  }
+
+  @override
+  Future<ActionResult> takeScreenshot() async {
+    final path = _timestampedPath('png');
+    if (await _tryRun('grim', [path])) {
+      return ActionResult.ok('Capture enregistrée : $path');
+    }
+    if (await _tryRun('gnome-screenshot', ['-f', path])) {
+      return ActionResult.ok('Capture enregistrée : $path');
+    }
+    if (await _tryRun('scrot', [path])) {
+      return ActionResult.ok('Capture enregistrée : $path');
+    }
+    if (await _tryRun('import', ['-window', 'root', path])) {
+      return ActionResult.ok('Capture enregistrée : $path');
+    }
+    return const ActionResult.fail(
+        'Aucun outil de capture trouvé (grim/gnome-screenshot/scrot/import).');
+  }
+
+  @override
+  Future<ActionResult> startVideoCapture() async {
+    if (_recordingProcess != null) {
+      return const ActionResult.fail('Un enregistrement est déjà en cours.');
+    }
+    final path = _timestampedPath('mp4');
+
+    final wfRecorder = await _spawnRecording('wf-recorder', ['-f', path]);
+    if (wfRecorder != null) {
+      _recordingProcess = wfRecorder;
+      return ActionResult.ok('Enregistrement démarré : $path');
+    }
+
+    final resolution = await _detectX11Resolution();
+    final ffmpeg = await _spawnRecording('ffmpeg', [
+      '-y',
+      '-video_size',
+      resolution,
+      '-f',
+      'x11grab',
+      '-i',
+      ':0.0',
+      path,
+    ]);
+    if (ffmpeg != null) {
+      _recordingProcess = ffmpeg;
+      return ActionResult.ok('Enregistrement démarré : $path');
+    }
+
+    return const ActionResult.fail(
+        'Aucun outil de capture vidéo trouvé (installez `wf-recorder` ou `ffmpeg`).');
+  }
+
+  @override
+  Future<ActionResult> stopVideoCapture() async {
+    final process = _recordingProcess;
+    if (process == null) {
+      return const ActionResult.fail('Aucun enregistrement en cours.');
+    }
+    _recordingProcess = null;
+    process.kill(ProcessSignal.sigint);
+    return const ActionResult.ok('Enregistrement arrêté.');
+  }
+
+  Future<String> _detectX11Resolution() async {
+    final output = await _runOutput('xdpyinfo', const []);
+    if (output != null) {
+      final match = RegExp(r'dimensions:\s+(\d+x\d+)').firstMatch(output);
+      if (match != null) return match.group(1)!;
+    }
+    return '1920x1080';
+  }
+
+  Future<Process?> _spawnRecording(
+      String executable, List<String> args) async {
+    try {
+      final process = await Process.start(executable, args,
+          mode: ProcessStartMode.detached);
+      return process.pid > 0 ? process : null;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<bool> _tryRun(String executable, List<String> args) async {

@@ -20,6 +20,17 @@ class ClientActionResult {
       {required this.action, required this.success, this.message});
 }
 
+/// État système courant du PC connecté (volume, luminosité, enregistrement
+/// vidéo en cours), reçu via le message `system_state`.
+class SystemState {
+  final int? volume;
+  final int? brightness;
+  final bool recording;
+
+  const SystemState(
+      {this.volume, this.brightness, this.recording = false});
+}
+
 /// Contrôleur du rôle "client" (téléphone Android).
 /// Gère la connexion WebSocket vers le PC, la réception des métriques,
 /// et la reconnexion automatique (backoff exponentiel, max 30s).
@@ -35,6 +46,7 @@ class ClientController extends ChangeNotifier {
 
   MetricsPayload? lastPayload;
   final List<MetricsPayload> history = [];
+  SystemState? systemState;
 
   WebSocketChannel? _channel;
   StreamSubscription? _subscription;
@@ -117,6 +129,13 @@ class ClientController extends ChangeNotifier {
             message: json['message'] as String?,
           ));
           break;
+        case 'system_state':
+          systemState = SystemState(
+            volume: json['volume'] as int?,
+            brightness: json['brightness'] as int?,
+            recording: json['recording'] as bool? ?? false,
+          );
+          break;
       }
       notifyListeners();
     } catch (e) {
@@ -155,9 +174,19 @@ class ClientController extends ChangeNotifier {
 
   /// Demande au PC connecté d'exécuter une action système (voir
   /// `SystemActions` côté serveur pour la liste : lock, task_manager,
-  /// volume_up, volume_down, brightness_up, brightness_down).
-  void sendSystemAction(String action) {
-    _channel?.sink.add(jsonEncode({'type': 'system_action', 'action': action}));
+  /// volume_set, brightness_set, media_previous, media_play_pause,
+  /// media_next, screenshot, video_capture_start, video_capture_stop).
+  /// `value` est requis pour `volume_set`/`brightness_set` (0-100).
+  void sendSystemAction(String action, {int? value}) {
+    final payload = <String, dynamic>{'type': 'system_action', 'action': action};
+    if (value != null) payload['value'] = value;
+    _channel?.sink.add(jsonEncode(payload));
+  }
+
+  /// Demande un rafraîchissement immédiat de l'état système (volume,
+  /// luminosité, enregistrement en cours).
+  void requestSystemState() {
+    _channel?.sink.add(jsonEncode({'type': 'get_system_state'}));
   }
 
   void disconnect() {
@@ -169,6 +198,7 @@ class ClientController extends ChangeNotifier {
     status = ConnectionStatus.disconnected;
     lastPayload = null;
     history.clear();
+    systemState = null;
     notifyListeners();
   }
 

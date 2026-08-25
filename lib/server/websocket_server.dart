@@ -77,6 +77,20 @@ class ServerController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Déconnecte un appareil déjà connecté (identifié par son adresse
+  /// `ip:port`, telle qu'affichée dans `connectedClientAddresses`).
+  Future<void> disconnectClient(String address) async {
+    final sockets = _clients.entries
+        .where((entry) => entry.value == address)
+        .map((entry) => entry.key)
+        .toList();
+    for (final socket in sockets) {
+      _clients.remove(socket);
+      await socket.close();
+    }
+    notifyListeners();
+  }
+
   /// Redémarre le serveur avec un nouveau port WebSocket.
   Future<void> setPort(int newPort) async {
     port = newPort;
@@ -149,6 +163,7 @@ class ServerController extends ChangeNotifier {
         'hostname': hostname,
         'interval_ms': intervalMs,
       }));
+      _sendSystemState(socket);
 
       socket.listen(
         (data) => _handleClientMessage(socket, data),
@@ -205,6 +220,9 @@ class ServerController extends ChangeNotifier {
       'media_previous' => await _actions.mediaPrevious(),
       'media_play_pause' => await _actions.mediaPlayPause(),
       'media_next' => await _actions.mediaNext(),
+      'screenshot' => await _actions.takeScreenshot(),
+      'video_capture_start' => await _actions.startVideoCapture(),
+      'video_capture_stop' => await _actions.stopVideoCapture(),
       _ => ActionResult.fail('Action inconnue : $action'),
     };
     try {
@@ -217,6 +235,15 @@ class ServerController extends ChangeNotifier {
     } catch (_) {
       // Le client a peut-être déjà fermé la connexion.
     }
+    const stateChangingActions = {
+      'volume_set',
+      'brightness_set',
+      'video_capture_start',
+      'video_capture_stop',
+    };
+    if (stateChangingActions.contains(action)) {
+      _sendSystemState(socket);
+    }
   }
 
   Future<void> _sendSystemState(WebSocket socket) async {
@@ -227,6 +254,7 @@ class ServerController extends ChangeNotifier {
         'type': 'system_state',
         'volume': volume,
         'brightness': brightness,
+        'recording': _actions.isCapturingVideo,
       }));
     } catch (_) {
       // Le client a peut-être déjà fermé la connexion.

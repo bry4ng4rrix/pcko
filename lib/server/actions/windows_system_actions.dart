@@ -12,10 +12,22 @@ import 'system_actions.dart';
 ///   externes ne sont pas supportés (limitation de Windows lui-même, qui
 ///   nécessiterait DDC/CI et un outil tiers).
 /// - Média : touches multimédia simulées via `keybd_event` (P/Invoke).
+/// - Capture d'écran : `System.Drawing`/`System.Windows.Forms` (.NET,
+///   toujours présent). Capture vidéo : raccourci Win+Alt+R de la Xbox
+///   Game Bar (natif, bascule démarrage/arrêt — nécessite que la capture en
+///   arrière-plan de la Game Bar soit activée dans les paramètres Windows).
 class WindowsSystemActions implements SystemActions {
   static const _vkMediaPlayPause = 0xB3;
   static const _vkMediaNextTrack = 0xB0;
   static const _vkMediaPrevTrack = 0xB1;
+  static const _vkLWin = 0x5B;
+  static const _vkMenu = 0x12; // Alt
+  static const _vkR = 0x52;
+
+  bool _recording = false;
+
+  @override
+  bool get isCapturingVideo => _recording;
 
   /// Interop COM vers `IAudioEndpointVolume`, réutilisé pour lire et écrire
   /// le volume maître du périphérique de sortie par défaut.
@@ -170,6 +182,93 @@ public class PckoKeyboard {
 [PckoKeyboard]::keybd_event(''' +
         vk.toString() +
         r''', 0, 2, [UIntPtr]::Zero)
+''';
+    final result =
+        await Process.run('powershell', ['-NoProfile', '-Command', script]);
+    return result.exitCode == 0
+        ? const ActionResult.ok()
+        : ActionResult.fail('PowerShell a échoué (code ${result.exitCode}).');
+  }
+
+  @override
+  Future<ActionResult> takeScreenshot() async {
+    final userProfile = Platform.environment['USERPROFILE'] ?? '.';
+    final dir = '$userProfile\\Pictures\\pcko';
+    final stamp =
+        DateTime.now().toIso8601String().replaceAll(RegExp(r'[:.]'), '-');
+    final path = '$dir\\pcko_$stamp.png';
+    final script = '''
+New-Item -ItemType Directory -Force -Path "$dir" | Out-Null
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+\$bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+\$bmp = New-Object System.Drawing.Bitmap \$bounds.Width, \$bounds.Height
+\$graphics = [System.Drawing.Graphics]::FromImage(\$bmp)
+\$graphics.CopyFromScreen(\$bounds.Location, [System.Drawing.Point]::Empty, \$bounds.Size)
+\$bmp.Save("$path", [System.Drawing.Imaging.ImageFormat]::Png)
+''';
+    final result =
+        await Process.run('powershell', ['-NoProfile', '-Command', script]);
+    return result.exitCode == 0
+        ? ActionResult.ok('Capture enregistrée : $path')
+        : ActionResult.fail('PowerShell a échoué (code ${result.exitCode}).');
+  }
+
+  @override
+  Future<ActionResult> startVideoCapture() async {
+    if (_recording) {
+      return const ActionResult.fail('Un enregistrement est déjà en cours.');
+    }
+    final result = await _sendGameBarToggle();
+    if (result.success) _recording = true;
+    return result.success
+        ? const ActionResult.ok('Enregistrement démarré (Xbox Game Bar).')
+        : result;
+  }
+
+  @override
+  Future<ActionResult> stopVideoCapture() async {
+    if (!_recording) {
+      return const ActionResult.fail('Aucun enregistrement en cours.');
+    }
+    final result = await _sendGameBarToggle();
+    _recording = false;
+    return result.success
+        ? const ActionResult.ok('Enregistrement arrêté.')
+        : result;
+  }
+
+  Future<ActionResult> _sendGameBarToggle() async {
+    final script = r'''
+Add-Type -TypeDefinition @"
+using System;
+using System.Runtime.InteropServices;
+public class PckoKeyboard {
+  [DllImport("user32.dll")]
+  public static extern void keybd_event(byte bVk, byte bScan, uint dwFlags, UIntPtr dwExtraInfo);
+}
+"@
+$down = 0
+$up = 2
+[PckoKeyboard]::keybd_event(''' +
+        _vkLWin.toString() +
+        r''', 0, $down, [UIntPtr]::Zero)
+[PckoKeyboard]::keybd_event(''' +
+        _vkMenu.toString() +
+        r''', 0, $down, [UIntPtr]::Zero)
+[PckoKeyboard]::keybd_event(''' +
+        _vkR.toString() +
+        r''', 0, $down, [UIntPtr]::Zero)
+Start-Sleep -Milliseconds 50
+[PckoKeyboard]::keybd_event(''' +
+        _vkR.toString() +
+        r''', 0, $up, [UIntPtr]::Zero)
+[PckoKeyboard]::keybd_event(''' +
+        _vkMenu.toString() +
+        r''', 0, $up, [UIntPtr]::Zero)
+[PckoKeyboard]::keybd_event(''' +
+        _vkLWin.toString() +
+        r''', 0, $up, [UIntPtr]::Zero)
 ''';
     final result =
         await Process.run('powershell', ['-NoProfile', '-Command', script]);

@@ -111,6 +111,20 @@ class ServerConnexionView extends StatelessWidget {
                                   color: Colors.green),
                               title: Text(addr),
                               contentPadding: EdgeInsets.zero,
+                              trailing: IconButton(
+                                icon: const Icon(Icons.link_off,
+                                    color: Colors.red),
+                                tooltip: 'Déconnecter',
+                                onPressed: () async {
+                                  await server.disconnectClient(addr);
+                                  if (!context.mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    SnackBar(
+                                        content:
+                                            Text('$addr déconnecté.')),
+                                  );
+                                },
+                              ),
                             ))
                         .toList(),
                   ),
